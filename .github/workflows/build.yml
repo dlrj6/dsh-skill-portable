@@ -1,0 +1,39 @@
+name: build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build (system csc, .NET Framework 4.x)
+        shell: cmd
+        run: src\build.cmd
+
+      - name: Self-test (32 assertions)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\SkillManager.exe -ArgumentList '--selftest','--out','selftest.txt' -Wait -PassThru
+          Get-Content .\selftest.txt
+          if ($p.ExitCode -ne 0) { throw "selftest exit code $($p.ExitCode)" }
+          $failed = Select-String -Path .\selftest.txt -Pattern 'FAIL' -Quiet
+          if ($failed) { throw "selftest contains FAIL lines" }
+
+      - name: UI template check (offscreen render)
+        shell: pwsh
+        run: |
+          $p = Start-Process -FilePath .\SkillManager.exe -ArgumentList '--check-ui','--out','checkui.txt' -Wait -PassThru
+          Get-Content .\checkui.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SkillManager
+          path: SkillManager.exe

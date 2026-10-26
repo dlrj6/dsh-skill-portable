@@ -1,0 +1,27 @@
+# 运行时产物：只在本地生成，绝不提交
+roots.txt
+portable.txt
+crash.txt
+version.txt
+echoed-args.txt
+selftest.txt
+smoke.txt
+checkui.txt
+report*.txt
+
+# 构建产物（发版时作为 Release 附件，不进仓库）
+SkillManager.exe
+*.pdb
+*.bak
+
+# 打包临时目录
+pkg/
+
+# 停用池
+skills/.disabled/
+examples/skills/.disabled/
+
+# 系统垃圾
+Thumbs.db
+desktop.ini
+.DS_Store
