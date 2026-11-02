@@ -17,7 +17,7 @@ jobs:
         shell: cmd
         run: src\build.cmd
 
-      - name: Self-test (32 assertions)
+      - name: Self-test (36 assertions)
         shell: pwsh
         run: |
           $p = Start-Process -FilePath .\SkillManager.exe -ArgumentList '--selftest','--out','selftest.txt' -Wait -PassThru

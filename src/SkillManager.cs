@@ -1,4 +1,4 @@
-// SkillManager.cs —— DSH skill 管理器（便携单文件版）
+﻿// SkillManager.cs —— DSH skill 管理器（便携单文件版）
 //
 // 编译（Windows 自带编译器，不需要装任何东西）：
 //   C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe ^
@@ -26,6 +26,7 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Imaging;
 using System.Windows.Shapes;
 using Microsoft.Win32;
 // Shapes.Path 和 IO.Path 同名，这里统一用 IO 的那个
@@ -37,12 +38,12 @@ using Path = System.IO.Path;
 [assembly: System.Reflection.AssemblyProduct("DSH Skill Manager")]
 [assembly: System.Reflection.AssemblyDescription("DSH / SKILL.md 技能开关管理器（便携单文件版）")]
 [assembly: System.Reflection.AssemblyCopyright("MIT License")]
-[assembly: System.Reflection.AssemblyVersion("1.0.0.0")]
-[assembly: System.Reflection.AssemblyFileVersion("1.0.0.0")]
+[assembly: System.Reflection.AssemblyVersion("1.0.1.0")]
+[assembly: System.Reflection.AssemblyFileVersion("1.0.1.0")]
 
 namespace SkillManager
 {
-    /// <summary>三种状态：开、关（模型看不见但能手动调用）、卸载（挪进 .disabled）。</summary>
+    /// <summary>三种状态：开、关（模型看不见但能手动调用）、归档（挪进 .disabled）。</summary>
     internal enum SkillState { On, Off, Uninstalled }
 
     internal sealed class SkillInfo
@@ -50,14 +51,14 @@ namespace SkillManager
         public string Name;           // 文件名（去掉 .md）
         public string FilePath;       // 指令文件路径
         public bool IsBundle;         // true = <名字>/SKILL.md，false = <名字>.md
-        public bool InPool;           // 是否在停用池里
+        public bool InPool;           // 是否在归档池里
         public string FrontmatterName; // frontmatter 里的 name
         public string Description;
         public SkillState State;
         public bool Broken;           // frontmatter 不合法
         public List<string> Errors = new List<string>();
 
-        /// <summary>界面显示用的状态：池里的一律算「已卸载」。</summary>
+        /// <summary>界面显示用的状态：池里的一律算「已归档」。</summary>
         public SkillState Shown { get { return InPool ? SkillState.Uninstalled : State; } }
 
         public string LeafPath
@@ -77,7 +78,7 @@ namespace SkillManager
             {
                 case SkillState.On: return "已启用";
                 case SkillState.Off: return "已禁用";
-                default: return "已卸载";
+                default: return "已归档";
             }
         }
 
@@ -146,9 +147,76 @@ namespace SkillManager
                 if (colon <= 0) continue;
                 string key = lines[i].Substring(0, colon).Trim();
                 if (key.Length == 0 || key.Contains(' ') || key.Contains('#')) continue;
-                map[key] = lines[i].Substring(colon + 1).Trim();
+                string raw = lines[i].Substring(colon + 1).Trim();
+                if (IsBlockScalarIndicator(raw))
+                {
+                    // YAML 块标量（description: > / |）的正文在下面缩进行里。
+                    // 只取同一行的话，这种写法只能读出一个 ">"，说明列就空了。
+                    int consumed;
+                    map[key] = ReadBlockScalar(lines, i + 1, block[1], CountIndent(lines[i]), raw[0] == '|', out consumed);
+                    i = consumed - 1;   // 循环里的 i++ 跳过已经吃掉的块内行
+                }
+                else
+                {
+                    map[key] = raw;
+                }
             }
             return map;
+        }
+
+        /// <summary>值是块标量指示符吗？`>` / `|` 后面可带 chomping（-/+) 或缩进数字。</summary>
+        private static bool IsBlockScalarIndicator(string raw)
+        {
+            if (raw.Length == 0) return false;
+            if (raw[0] != '>' && raw[0] != '|') return false;
+            for (int i = 1; i < raw.Length; i++)
+            {
+                char c = raw[i];
+                if (c != '-' && c != '+' && (c < '0' || c > '9')) return false;
+            }
+            return true;
+        }
+
+        private static int CountIndent(string line)
+        {
+            int n = 0;
+            while (n < line.Length && (line[n] == ' ' || line[n] == '\t')) n++;
+            return n;
+        }
+
+        /// <summary>把块标量的缩进行收成一行：`>` 折成空格（空行折成换行），`|` 保留换行。consumed = 吃到的行号（不含）。</summary>
+        private static string ReadBlockScalar(string[] lines, int start, int end, int keyIndent, bool literal, out int consumed)
+        {
+            var body = new List<string>();
+            int i = start;
+            for (; i < end; i++)
+            {
+                string line = lines[i];
+                if (line.Trim().Length == 0) { body.Add(""); continue; }
+                if (CountIndent(line) <= keyIndent) break;   // 同级的下一个键，块结束
+                body.Add(line);
+            }
+            consumed = i;
+            while (body.Count > 0 && body[body.Count - 1].Trim().Length == 0) body.RemoveAt(body.Count - 1);
+            if (body.Count == 0) return "";
+
+            int minIndent = int.MaxValue;
+            foreach (string line in body)
+                if (line.Trim().Length > 0 && CountIndent(line) < minIndent) minIndent = CountIndent(line);
+
+            var sb = new StringBuilder();
+            bool first = true;
+            bool blankBefore = false;
+            foreach (string line in body)
+            {
+                string text = line.Length > minIndent ? line.Substring(minIndent) : "";
+                if (text.Trim().Length == 0) { blankBefore = true; continue; }
+                if (!first) sb.Append(literal || blankBefore ? "\n" : " ");
+                sb.Append(text.TrimEnd());
+                first = false;
+                blankBefore = false;
+            }
+            return sb.ToString().Trim();
         }
 
         /// <summary>从两个开关推出现在处于哪种状态。</summary>
@@ -210,7 +278,7 @@ namespace SkillManager
             return string.Join("\n", result);
         }
 
-        /// <summary>扫一个根目录，连同停用池里的条目一起列出来。</summary>
+        /// <summary>扫一个根目录，连同归档池里的条目一起列出来。</summary>
         public static List<SkillInfo> Scan(string root)
         {
             var list = new List<SkillInfo>();
@@ -272,7 +340,7 @@ namespace SkillManager
             return info;
         }
 
-        /// <summary>改状态。已在池里的会搬回根目录，改成卸载的会搬进池里。</summary>
+        /// <summary>改状态。已在池里的会搬回根目录，改成归档的会搬进池里。</summary>
         public static string Apply(string root, SkillInfo item, SkillState state)
         {
             bool bom;
@@ -281,9 +349,9 @@ namespace SkillManager
 
             if (state == SkillState.Uninstalled)
             {
-                if (item.InPool) return "本来就在停用池里，只更新了开关";
+                if (item.InPool) return "本来就在归档池里，只更新了开关";
                 string dest = MoveToPool(root, item, true);
-                return "已卸载到 " + PoolName + "：" + dest;
+                return "已归档到 " + PoolName + "：" + dest;
             }
             if (item.InPool)
             {
@@ -353,6 +421,19 @@ namespace SkillManager
             check(!round.Contains("disable-model-invocation"), "连续切 5 次不留残余开关行");
             check(round.Contains("正文"), "连续切换后正文仍在");
 
+            sink.WriteLine("[1b] description 块标量（> / |）");
+            string yaml = "---\nname: a\ndescription: >\n  把扫描件/照片里的表格复刻成 Word：\n  量框线定列宽行高字号。\nversion: 0.1.0\n---\n正文\n";
+            string[] yamlLines = yaml.Split('\n');
+            var yamlKeys = FrontmatterKeys(yamlLines, FindFrontmatter(yamlLines));
+            check(yamlKeys["description"] == "把扫描件/照片里的表格复刻成 Word： 量框线定列宽行高字号。", "> 折叠块标量读成一行");
+            check(yamlKeys["version"] == "0.1.0", "块标量后面的键没被吃掉");
+            string yamlLiteral = "---\nname: b\ndescription: |\n  第一行\n  第二行\n---\n";
+            string[] literalLines = yamlLiteral.Split('\n');
+            check(FrontmatterKeys(literalLines, FindFrontmatter(literalLines))["description"] == "第一行\n第二行", "| 保留换行");
+            string yamlChomp = "---\nname: c\ndescription: >-\n  一\n  二\n---\n";
+            string[] chompLines = yamlChomp.Split('\n');
+            check(FrontmatterKeys(chompLines, FindFrontmatter(chompLines))["description"] == "一 二", ">- 带 chomping 也认");
+
             sink.WriteLine("[2] 状态识别");
             check(DetectState(Keys("")) == SkillState.On, "没有开关行 -> on");
             check(DetectState(Keys("disable-model-invocation: false\n")) == SkillState.On, "disable=false -> on");
@@ -381,9 +462,9 @@ namespace SkillManager
             check(File.Exists(Path.Combine(root, "beta.md")), "off 状态文件仍在根目录");
 
             Apply(root, get("beta"), SkillState.Uninstalled);
-            check(shown("beta") == SkillState.Uninstalled, "beta 卸载后 = uninstalled");
-            check(!File.Exists(Path.Combine(root, "beta.md")), "卸载后离开根目录");
-            check(File.Exists(Path.Combine(root, PoolName, "beta.md")), "卸载后进了 .disabled");
+            check(shown("beta") == SkillState.Uninstalled, "beta 归档后 = uninstalled");
+            check(!File.Exists(Path.Combine(root, "beta.md")), "归档后离开根目录");
+            check(File.Exists(Path.Combine(root, PoolName, "beta.md")), "归档后进了 .disabled");
 
             Apply(root, get("beta"), SkillState.On);
             check(shown("beta") == SkillState.On, "beta 装回后 = on");
@@ -399,7 +480,7 @@ namespace SkillManager
             File.WriteAllText(Path.Combine(bdir, "SKILL.md"), "---\nname: gamma\ndescription: 目录式\n---\n正文\n", new UTF8Encoding(false));
             check(Scan(root).Count == 3, "目录式 skill 被扫到");
             Apply(root, get("gamma"), SkillState.Uninstalled);
-            check(Directory.Exists(Path.Combine(root, PoolName, "gamma")), "目录式也能卸载（整个目录搬走）");
+            check(Directory.Exists(Path.Combine(root, PoolName, "gamma")), "目录式也能归档（整个目录搬走）");
             check(!Directory.Exists(bdir), "搬走后原目录不残留");
             Apply(root, get("gamma"), SkillState.On);
             check(Directory.Exists(bdir), "目录式能装回");
@@ -447,8 +528,7 @@ namespace SkillManager
         private SkillInfo undoItem;
         private SkillState undoFrom;
         /// <summary>界面和 --version 里显示的版本号，跟上面的 AssemblyVersion 一起改。</summary>
-        public const string AppVersion = "1.0.0";
-
+        public const string AppVersion = "1.0.1";
         private bool buildingRow;
         /// <summary>false = 自检模式，不能弹任何对话框（否则无人值守时会挂住）。</summary>
         private static bool interactive = true;
@@ -879,7 +959,7 @@ namespace SkillManager
             bar.Children.Add(MakeButton("全部启用", false, delegate { SetAll(SkillState.On); }));
             bar.Children.Add(MakeButton("全部禁用", false, delegate { SetAll(SkillState.Off); }));
             bar.Children.Add(MakeButton("打开目录", false, delegate { Process.Start("explorer.exe", root); }));
-            bar.Children.Add(MakeButton("查看停用池", false, delegate
+            bar.Children.Add(MakeButton("查看归档池", false, delegate
             {
                 string pool = Path.Combine(root, Kernel.PoolName);
                 Directory.CreateDirectory(pool);
@@ -962,7 +1042,7 @@ namespace SkillManager
             searchRow.Children.Add(txtSearch);
             chkUninstalled = new CheckBox
             {
-                Content = "显示已卸载的",
+                Content = "显示已归档的",
                 IsChecked = true,
                 Foreground = Br(C_Text),
                 VerticalAlignment = VerticalAlignment.Center,
@@ -1010,7 +1090,7 @@ namespace SkillManager
             msgText.TextWrapping = TextWrapping.Wrap;
             msgBox.Child = msgText;
             bottom.Children.Add(msgBox);
-            var tip = Label("圆点：绿=已启用，灰=已禁用，橙=已卸载。改状态请用状态下拉。改完不用重开 DSH：skill 目录是实时监听的。",
+            var tip = Label("圆点：绿=已启用，灰=已禁用，橙=已归档。改状态请用状态下拉。改完不用重开 DSH：skill 目录是实时监听的。",
                             12, Color.FromRgb(0x8B, 0x94, 0x9E));
             tip.Margin = new Thickness(2, 8, 0, 0);
             tip.TextWrapping = TextWrapping.Wrap;
@@ -1106,7 +1186,7 @@ namespace SkillManager
         {
             var grid = NewRowGrid();
             var dot = new Ellipse { Width = 10, Height = 10, VerticalAlignment = VerticalAlignment.Center };
-            dot.ToolTip = "绿=已启用，灰=已禁用，橙=已卸载";
+            dot.ToolTip = "绿=已启用，灰=已禁用，橙=已归档";
             AddCell(grid, 0, dot, HorizontalAlignment.Center);
             AddCell(grid, 1, Label((index + 1).ToString(), 13, Color.FromRgb(0x6E, 0x76, 0x81)), HorizontalAlignment.Left);
 
@@ -1193,7 +1273,7 @@ namespace SkillManager
             int on = items.Count(x => !x.InPool && x.State == SkillState.On);
             int off = items.Count(x => !x.InPool && x.State == SkillState.Off);
             int un = items.Count(x => x.InPool);
-            titleSummary.Text = "启用 " + on + " · 禁用 " + off + " · 已卸载 " + un;
+            titleSummary.Text = "启用 " + on + " · 禁用 " + off + " · 已归档 " + un;
         }
 
         private void UpdateUndoButton()
@@ -1302,7 +1382,7 @@ namespace SkillManager
         {
             SkillInfo s = Find(name);
             if (s == null) return;
-            var ans = MessageBox.Show("彻底删除 " + name + "？\n\n文件会被直接删掉，不能恢复。\n想保留文件的话，把状态改成「已卸载」。",
+            var ans = MessageBox.Show("彻底删除 " + name + "？\n\n文件会被直接删掉，不能恢复。\n想保留文件的话，把状态改成「已归档」。",
                                       "确认删除", MessageBoxButton.YesNo, MessageBoxImage.Warning);
             if (ans != MessageBoxResult.Yes) return;
             try
@@ -1322,7 +1402,7 @@ namespace SkillManager
             dlg.Owner = this;
             if (dlg.ShowDialog() == true)
             {
-                SetMsg("已创建：" + dlg.CreatedPath + "（现在去编辑它的正文即可）", C_Green);
+                try { System.Diagnostics.Process.Start("notepad.exe", "\"" + dlg.CreatedPath + "\""); } catch { } SetMsg("已创建：" + dlg.CreatedPath + "（已用记事本打开，写完保存即可）", C_Green);
                 Reload();
             }
         }
@@ -1352,6 +1432,26 @@ namespace SkillManager
         ///   1) 下拉框里找得到 ToggleButton，且勾它能带动 IsDropDownOpen
         ///   2) 禁用按钮的底色是我要的深色（白底白字那个 bug 的回归检查）
         /// </summary>
+        /// <summary>
+        /// 把主界面渲染成 PNG（更新 README 截图用）：挪到屏幕外 Show 一次、
+        /// 等布局落定，再用 RenderTargetBitmap 画下来，不开可见窗口、不打扰人。
+        /// </summary>
+        public void SaveScreenshot(string path)
+        {
+            Left = -4000; Top = -4000;
+            ShowInTaskbar = false;
+            Show();
+            Dispatcher.Invoke(delegate { }, System.Windows.Threading.DispatcherPriority.Loaded);
+            UpdateLayout();
+            int w = (int)Math.Ceiling(ActualWidth > 0 ? ActualWidth : Width);
+            int h = (int)Math.Ceiling(ActualHeight > 0 ? ActualHeight : Height);
+            var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+            rtb.Render(this);
+            var enc = new PngBitmapEncoder();
+            enc.Frames.Add(BitmapFrame.Create(rtb));
+            using (var fs = File.Create(path)) enc.Save(fs);
+            Close();
+        }
         public void CheckUi(TextWriter sink)
         {
             Left = -4000;
@@ -1587,10 +1687,15 @@ namespace SkillManager
 
             bool smoke = args.Contains("--smoke");
             bool checkUi = args.Contains("--check-ui");
-            interactive = !smoke && !checkUi;   // 自检模式下一律不弹对话框
+            interactive = !smoke && !checkUi && !args.Contains("--screenshot");   // 自检模式下一律不弹对话框
 
             var app = new Application();
             var win = new MainWindow();
+            if (args.Contains("--screenshot"))
+            {
+                win.SaveScreenshot(outFile != null ? outFile : "screenshot.png");
+                return 0;
+            }
             if (checkUi)
             {
                 if (outFile != null)
@@ -1640,7 +1745,7 @@ namespace SkillManager
             sp.Children.Add(new TextBlock { Text = "名字（英文，用作文件名和调用名，例如 my-helper）", Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E)) });
             var t1 = new TextBox { Margin = new Thickness(0, 4, 0, 12), Background = new SolidColorBrush(Color.FromRgb(0x16, 0x1B, 0x22)), Foreground = new SolidColorBrush(Color.FromRgb(0xC9, 0xD1, 0xD9)), BorderBrush = new SolidColorBrush(Color.FromRgb(0x30, 0x36, 0x3D)), Padding = new Thickness(6, 5, 6, 5) };
             sp.Children.Add(t1);
-            sp.Children.Add(new TextBlock { Text = "一句话说明什么时候用它（DSH 靠这句判断该不该调用）", Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E)) });
+            sp.Children.Add(new TextBlock { Text = "一句话说明什么时候用它（必填。DSH 靠这句判断该不该调用）", Foreground = new SolidColorBrush(Color.FromRgb(0x8B, 0x94, 0x9E)) });
             var t2 = new TextBox { Margin = new Thickness(0, 4, 0, 12), Height = 60, TextWrapping = TextWrapping.Wrap, AcceptsReturn = true, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, Background = new SolidColorBrush(Color.FromRgb(0x16, 0x1B, 0x22)), Foreground = new SolidColorBrush(Color.FromRgb(0xC9, 0xD1, 0xD9)), BorderBrush = new SolidColorBrush(Color.FromRgb(0x30, 0x36, 0x3D)), Padding = new Thickness(6, 5, 6, 5) };
             sp.Children.Add(t2);
 
@@ -1665,7 +1770,7 @@ namespace SkillManager
                 string file = Path.Combine(root, n + ".md");
                 if (File.Exists(file)) { MessageBox.Show("已经有一个同名的了。", "重复"); return; }
                 string desc = (t2.Text ?? "").Trim();
-                if (desc.Length == 0) desc = "（在这里写清楚什么时候用这个 skill）";
+                if (desc.Length == 0) { MessageBox.Show("说明不能为空：DSH 靠这句话判断什么时候该调用它。", "还差一句"); return; }
                 string content = "---\nname: " + n + "\ndescription: " + desc + "\n---\n\n在这里写这个 skill 的完整说明。\n";
                 File.WriteAllText(file, content, new UTF8Encoding(false));
                 CreatedPath = file;

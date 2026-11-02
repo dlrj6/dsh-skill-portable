@@ -12,12 +12,15 @@ report*.txt
 # 构建产物（发版时作为 Release 附件，不进仓库）
 SkillManager.exe
 *.pdb
-*.bak
+*.bak*
+
+# 发版附件不进仓库
+*.zip
 
 # 打包临时目录
 pkg/
 
-# 停用池
+# 归档池
 skills/.disabled/
 examples/skills/.disabled/
 

@@ -10,12 +10,12 @@ MainWindow（界面，WPF 代码手搭）
       ▼
 Kernel（内核，static）
       │
-      ├─ Scan(root)            扫目录，认出单文件 / 目录式 / 停用池
+      ├─ Scan(root)            扫目录，认出单文件 / 目录式 / 归档池
       ├─ DetectState(keys)     三个状态怎么认
       ├─ ApplyState(text, st)  把状态写回 frontmatter
       ├─ Apply(item, st)       改状态 + 必要时在根目录和 .disabled 之间移动
       ├─ Delete(item)          真删
-      └─ SelfTest(writer)      32 项断言
+      └─ SelfTest(writer)      36 项断言
 ```
 
 界面不直接碰文件——「什么算启用」只有 `Kernel` 一处实现，界面只负责显示和转发。
@@ -27,10 +27,10 @@ Kernel（内核，static）
 | --- | --- | --- |
 | 已启用 | 两个键都不写 | 根目录 |
 | 已禁用 | `disable-model-invocation: true` | 根目录 |
-| 已卸载 | 两个键都写（`disable-model-invocation: true` + `user-invocable: false`） | `根目录\.disabled\` |
+| 已归档 | 两个键都写（`disable-model-invocation: true` + `user-invocable: false`） | `根目录\.disabled\` |
 
-状态判断是把两个键一起看：只写了 `disable-model-invocation: true` 算「已禁用」；两个都关才算「已卸载」。
-「已卸载」同时写两个键，是为了文件被手动挪回根目录时也不会突然被模型调用。
+状态判断是把两个键一起看：只写了 `disable-model-invocation: true` 算「已禁用」；两个都关才算「已归档」。
+「已归档」同时写两个键，是为了文件被手动挪回根目录时也不会突然被模型调用。
 
 ## 写文件的两个硬约束
 
@@ -78,12 +78,20 @@ Kernel（内核，static）
 
 ## 自检模式
 
-- `--selftest`：纯内核，临时目录里造 skill、切状态、断言（32 项），不碰真实目录。
+- `--selftest`：纯内核，临时目录里造 skill、切状态、断言（36 项），不碰真实目录。
 - `--smoke`：把界面搭起来、扫一遍目录，验证行渲染/状态切换/撤销。
 - `--check-ui`：真正渲染（屏幕外），验证两个自绘模板。
+- `--screenshot --out 图.png`：离屏渲染整个窗口存成 PNG，只给文档截图用（CI 不跑）。
 - 全部支持 `--out 文件`；GUI 子系统没有 stdout，必须写文件。
 
 新增行为时，优先补 `Kernel.SelfTest` 里的断言——它跑起来没有副作用，最适合当回归测试。
+## frontmatter 块标量（`description: >` / `|`）
+
+YAML 的块标量把值写在冒号下面几行、按缩进归属，冒号后面只有一个指示符。
+只读同一行会拿到 `>`，说明列就是空的（photo-to-form-docx 这种长说明最容易踩）。
+现在 `FrontmatterKeys` 会把块收起来：`>` 折成空格、`|` 保留换行，
+遇到缩进回到键这一级就停，`-`/`+` chomping 和显式缩进数字也认。
+对应自检 `[1b]` 那 4 条断言。
 
 ## 编译
 
